@@ -1,2 +1,7 @@
-# cmake-win-template
-Template Repo for CMake Projects on windows
+# Segment Number Trees
+
+*An extremely fast data structure with worst case constant lookup time*
+
+## Intro
+
+

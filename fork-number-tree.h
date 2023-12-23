@@ -7,7 +7,7 @@
 #include <cstring>
 #include <climits>
 
-namespace FNtree {
+namespace FNTree {
 	struct BitCovers {
 		size_t shifts[sizeof(size_t) * CHAR_BIT] = {0};
 		constexpr BitCovers() {
@@ -22,6 +22,18 @@ namespace FNtree {
 	};
 
 	static constexpr BitCovers BIT_COVERS;
+
+	constexpr size_t getPartitionCount(size_t level, size_t childCount) {
+		size_t total = 0;
+		size_t childCumulative = childCount;
+		for (size_t i = 0; i < level; ++i)
+		{
+			total += childCumulative;
+			childCumulative *= childCount;
+		}
+
+		return total;
+	}
 
 	constexpr size_t getBitCount(size_t childCount) {
 		if (childCount == 2) {
@@ -58,7 +70,7 @@ namespace FNtree {
 			}
 		};
 
-		BitNode() { totalMemUsed += sizeof(BitNode);}
+		BitNode() { FNTree::totalMemUsed += sizeof(BitNode);}
 
 		static_assert(getBitCount(childCount) != (size_t)-1);
 		static constexpr size_t bitCount = getBitCount(childCount);

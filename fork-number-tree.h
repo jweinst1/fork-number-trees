@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <mutex>
 
 namespace FNTree {
 	struct BitCovers {
@@ -22,6 +23,42 @@ namespace FNTree {
 	};
 
 	static constexpr BitCovers BIT_COVERS;
+
+	constexpr size_t hashData(void* data, size_t size) {
+		size_t hash = 5381;
+		unsigned char* reader = (unsigned char*)data;
+		size_t ch = 0;
+		while ((ch = *reader++)) {
+			hash = ((hash << 5) + hash) + ch;
+		}
+		return hash;
+	}
+
+	struct KeyValuePair {
+		unsigned char key[16] = {0};
+		void* value = nullptr;
+	};
+
+	struct KeyValueSpot {
+		KeyValuePair* kvp = nullptr;
+		struct KeyValueSpot* next = nullptr;
+	};
+
+	struct ParitionLock {
+		std::mutex mux;
+	};
+
+	struct ScopedPartLock {
+		ScopedPartLock(ParitionLock* ptl):_ptl(ptl) {
+			_ptl->mux.lock();
+		}
+
+		~ScopedPartLock() {
+			_ptl->mux.unlock();
+		}
+
+		ParitionLock* _ptl;
+	};
 
 	constexpr size_t getPartitionCount(size_t level, size_t childCount) {
 		size_t total = 0;
@@ -48,11 +85,14 @@ namespace FNTree {
 			return 5;
 		} else if (childCount == 64) {
 			return 6;
+		} else if (childCount == 128) {
+			return 7;
 		}
 		return (size_t)-1;
 	}
 
-	static size_t totalMemUsed;
+	static size_t totalMemUsed = 0;
+	static size_t collCount = 0;
 
 	template <size_t keySize, size_t childCount>
 	struct BitNode {
@@ -102,6 +142,44 @@ namespace FNTree {
 	}
 
 	template <size_t keySize, size_t childCount>
+	void insertHash(BitNode<keySize, childCount>* tree, size_t key, KeyValuePair* kvp) {
+		BitNode<keySize, childCount>* current = tree;
+		size_t i = 0;
+		for (; i < BitNode<keySize, childCount>::bridgesSize; ++i)
+		{
+			//printf("key slice is %zu\n", key >> BitNode<keySize, childCount>::offsets.offsets[i]);
+			size_t shifted = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+			//printf("slice %zu ", shifted);
+			if (current->children[shifted] == nullptr) {
+				current->children[shifted] = new BitNode<keySize, childCount>();
+			} 
+			current =  (BitNode<keySize, childCount>*)current->children[shifted];
+		}
+		size_t shiftedLast = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+		//printf("slice %zu\n", shiftedLast);
+		KeyValueSpot* gotkv = (KeyValueSpot*)current->children[shiftedLast];
+		if (gotkv == nullptr) {
+			KeyValueSpot* newkvs = new KeyValueSpot();
+			newkvs->kvp = kvp;
+			current->children[shiftedLast] = newkvs;
+		} else {
+			FNTree::collCount += 1;
+			while (gotkv != nullptr) {
+				if (std::memcmp(gotkv->kvp->key, kvp->key, sizeof(kvp->key)) == 0) {
+					gotkv->kvp->value = kvp->value;
+					return;
+				}
+				gotkv = gotkv->next;
+			}
+			KeyValueSpot* newkvs = new KeyValueSpot();
+			newkvs->kvp = kvp;
+			gotkv = (KeyValueSpot*)current->children[shiftedLast];
+			newkvs->next = gotkv;
+			current->children[shiftedLast] = newkvs;
+		}
+	}
+
+	template <size_t keySize, size_t childCount>
 	void* findInto(BitNode<keySize, childCount>* tree, size_t key) {
 		BitNode<keySize, childCount>* current = tree;
 		//printf("FIND offsetsize is %zu\n", BitNode<keySize, childCount>::offsetsSize);
@@ -116,6 +194,30 @@ namespace FNTree {
 		}
 		size_t shiftedLast = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
 		return current->children[shiftedLast];
+	}
+
+	template <size_t keySize, size_t childCount>
+	void* findHash(BitNode<keySize, childCount>* tree, size_t key, KeyValuePair* kvp) {
+		BitNode<keySize, childCount>* current = tree;
+		//printf("FIND offsetsize is %zu\n", BitNode<keySize, childCount>::offsetsSize);
+		size_t i = 0;
+		for (; i < BitNode<keySize, childCount>::bridgesSize; ++i)
+		{
+			size_t shifted = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+			if (current->children[shifted] == nullptr) {
+				return nullptr;
+			}
+			current = (BitNode<keySize, childCount>*)current->children[shifted];
+		}
+		size_t shiftedLast = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+		KeyValueSpot* gotkv = (KeyValueSpot*)current->children[shiftedLast];
+		while (gotkv != nullptr) {
+			if (std::memcmp(gotkv->kvp->key, kvp->key, sizeof(kvp->key)) == 0) {
+				return gotkv->kvp->value;
+			}
+			gotkv = gotkv->next;
+		}
+		return nullptr;
 	}
 
 	template <size_t keySize, size_t childCount>
@@ -135,6 +237,28 @@ namespace FNTree {
 		current->children[shiftedLast] = nullptr;
 		return got;
 	}
+
+	struct MapObj {
+		static constexpr size_t mapKeySize = 21;
+		static constexpr size_t mapChildCount = 128;
+		BitNode<mapKeySize, mapChildCount> _bnode;
+
+		void insert(KeyValuePair* kvp) {
+			size_t hash_key = hashData(kvp->key, sizeof(kvp->key));
+			//printf("got the hash %zu, bit cover %zu\n", hash_key & BIT_COVERS.shifts[mapKeySize], BIT_COVERS.shifts[mapKeySize]);
+			//for (int i = 0; i < 16; ++i)
+			//{
+			//	printf("%u ", kvp->key[i]);
+			//}
+			//printf("\n");
+			insertHash<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp);
+		}
+
+		void* find(KeyValuePair* kvp) {
+			size_t hash_key = hashData(kvp->key, sizeof(kvp->key));
+			return findHash<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp);
+		}
+	};
 }
 
 #endif // FORK_NUMBER_TREE_HEAD

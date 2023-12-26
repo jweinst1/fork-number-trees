@@ -26,10 +26,11 @@ namespace FNTree {
 
 	constexpr size_t hashData(void* data, size_t size) {
 		size_t hash = 5381;
-		unsigned char* reader = (unsigned char*)data;
-		size_t ch = 0;
-		while ((ch = *reader++)) {
-			hash = ((hash << 5) + hash) + ch;
+		uint64_t* reader = (uint64_t*)data;
+		size_t count = size / sizeof(uint64_t);
+		for (size_t i = 0; i < count; ++i)
+		{
+			hash = ((hash << 5) + hash) ^ reader[i];
 		}
 		return hash;
 	}
@@ -37,6 +38,19 @@ namespace FNTree {
 	struct KeyValuePair {
 		unsigned char key[16] = {0};
 		void* value = nullptr;
+
+		void printKey() const {
+			for (size_t i = 0; i < sizeof(key); ++i)
+			{
+				printf("%u ", key[i]);
+			}
+			printf("\n");
+		}
+
+		void printValue() const {
+			int* reader = (int*)value;
+			printf("%d\n", *reader);
+		}
 	};
 
 	struct KeyValueSpot {
@@ -239,8 +253,8 @@ namespace FNTree {
 	}
 
 	struct MapObj {
-		static constexpr size_t mapKeySize = 21;
-		static constexpr size_t mapChildCount = 128;
+		static constexpr size_t mapKeySize = 25;
+		static constexpr size_t mapChildCount = 32;
 		BitNode<mapKeySize, mapChildCount> _bnode;
 
 		void insert(KeyValuePair* kvp) {

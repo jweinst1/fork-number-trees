@@ -190,6 +190,29 @@ namespace FNTree {
 	}
 
 	template <size_t keySize, size_t childCount>
+	void insertIntoPart(BitNode<keySize, childCount>* tree, size_t key, void* data, size_t levels) {
+		BitNode<keySize, childCount>* current = tree;
+		size_t i = 0;
+		for (; i < levels; ++i)
+		{
+			current = (BitNode<keySize, childCount>*)current->children[(key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift];
+		}
+		// now the lock part
+		ScopedPartLock scoped((ParitionLock*)current->lock);
+		for (; i < BitNode<keySize, childCount>::bridgesSize; ++i)
+		{
+			//printf("key slice is %zu\n", key >> BitNode<keySize, childCount>::offsets.offsets[i]);
+			size_t shifted = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+			if (current->children[shifted] == nullptr) {
+				current->children[shifted] = new BitNode<keySize, childCount>();
+			} 
+			current =  (BitNode<keySize, childCount>*)current->children[shifted];
+		}
+		size_t shiftedLast = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+		current->children[shiftedLast] = data;
+	}
+
+	template <size_t keySize, size_t childCount>
 	void insertHash(BitNode<keySize, childCount>* tree, size_t key, KeyValuePair* kvp) {
 		BitNode<keySize, childCount>* current = tree;
 		size_t i = 0;
@@ -289,6 +312,29 @@ namespace FNTree {
 	}
 
 	template <size_t keySize, size_t childCount>
+	void* findIntoPart(BitNode<keySize, childCount>* tree, size_t key, size_t levels) {
+		BitNode<keySize, childCount>* current = tree;
+		//printf("FIND offsetsize is %zu\n", BitNode<keySize, childCount>::offsetsSize);
+		size_t i = 0;
+		for (; i < levels; ++i)
+		{
+			current = (BitNode<keySize, childCount>*)current->children[(key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift];
+		}
+		// now the lock part
+		ScopedPartLock scoped((ParitionLock*)current->lock);
+		for (; i < BitNode<keySize, childCount>::bridgesSize; ++i)
+		{
+			size_t shifted = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+			if (current->children[shifted] == nullptr) {
+				return nullptr;
+			}
+			current = (BitNode<keySize, childCount>*)current->children[shifted];
+		}
+		size_t shiftedLast = (key >> BitNode<keySize, childCount>::offsets.offsets[i]) & BitNode<keySize, childCount>::bitShift;
+		return current->children[shiftedLast];
+	}
+
+	template <size_t keySize, size_t childCount>
 	void* findHash(BitNode<keySize, childCount>* tree, size_t key, KeyValuePair* kvp) {
 		BitNode<keySize, childCount>* current = tree;
 		//printf("FIND offsetsize is %zu\n", BitNode<keySize, childCount>::offsetsSize);
@@ -363,10 +409,11 @@ namespace FNTree {
 	struct MapObj {
 		static constexpr size_t mapKeySize = 25;
 		static constexpr size_t mapChildCount = 32;
+		static constexpr size_t levelCount = 3;
 		BitNode<mapKeySize, mapChildCount> _bnode;
 
 		MapObj() {
-			makeParitions<mapKeySize, mapChildCount>(&_bnode, 3);
+			makeParitions<mapKeySize, mapChildCount>(&_bnode, levelCount);
 		}
 
 		void insert(KeyValuePair* kvp) {
@@ -377,13 +424,50 @@ namespace FNTree {
 			//	printf("%u ", kvp->key[i]);
 			//}
 			//printf("\n");
-			insertHashPart<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp, 3);
+			insertHashPart<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp, levelCount);
 		}
 
 		void* find(KeyValuePair* kvp) {
 			size_t hash_key = hashData(kvp->key, sizeof(kvp->key));
-			return findHashPart<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp, 3);
+			return findHashPart<mapKeySize, mapChildCount>(&_bnode, hash_key, kvp, levelCount);
 		}
+	};
+
+	/*Used for integer based keys , ideally as an index.*/
+	struct IndexObj {
+		static constexpr size_t mapKeySize = 25;
+		static constexpr size_t mapChildCount = 32;
+		BitNode<mapKeySize, mapChildCount> _bnode;
+
+		void insert(size_t key, void* data) {
+			insertInto<mapKeySize, mapChildCount>(&_bnode, key, data);
+		}
+
+		void* find(size_t key) {
+			return findInto<mapKeySize, mapChildCount>(&_bnode, key);
+		}
+
+	};
+
+	/*Partitioned for multi-thread use*/
+	struct MTIndexObj {
+		static constexpr size_t mapKeySize = 25;
+		static constexpr size_t mapChildCount = 32;
+		static constexpr size_t levelCount = 3;
+		BitNode<mapKeySize, mapChildCount> _bnode;
+
+		MTIndexObj() {
+			makeParitions<mapKeySize, mapChildCount>(&_bnode, levelCount);
+		}
+
+		void insert(size_t key, void* data) {
+			insertIntoPart<mapKeySize, mapChildCount>(&_bnode, key, data, levelCount);
+		}
+
+		void* find(size_t key) {
+			return findIntoPart<mapKeySize, mapChildCount>(&_bnode, key, levelCount);
+		}
+
 	};
 }
 

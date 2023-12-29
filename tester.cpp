@@ -199,7 +199,7 @@ static void perfTesting() {
 	time_function("insert map test", tester_map_func, 1);
 	time_function("ilookup map test", lookup_map_func, 1);
 
-	mt_tester();
+	time_function("mt bit lookup test", mt_tester, 1);
 }
 
 int main(int argc, char const *argv[])

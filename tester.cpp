@@ -190,16 +190,16 @@ ilookup map test -> US 19345
 static void perfTesting() {
 	populateBank();
 	populateStrBank();
-	time_function("insert bit test", tester_func, 1);
+	time_function("FNT insert test", tester_func, 1);
 	printf("mem used %zu\n", FNTree::totalMemUsed);
 	printf("coll used %zu\n", FNTree::collCount);
-	time_function("ilookup bit test", lookup_func, 1);
+	time_function("FNT lookup test", lookup_func, 1);
 	//deleter_func();
 
-	time_function("insert map test", tester_map_func, 1);
-	time_function("ilookup map test", lookup_map_func, 1);
+	time_function("std::unordered_map insert map test", tester_map_func, 1);
+	time_function("std::unordered_map lookup map test", lookup_map_func, 1);
 
-	time_function("mt bit lookup test", mt_tester, 1);
+	time_function("FNT Multi-Threaded lookup test", mt_tester, 1);
 }
 
 int main(int argc, char const *argv[])
